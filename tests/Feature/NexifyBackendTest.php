@@ -66,6 +66,40 @@ class NexifyBackendTest extends TestCase
         $this->assertDatabaseHas('coupons',['id'=>$coupon->id,'used_count'=>1]);
     }
 
+    public function test_addon_coupon_only_discounts_the_matching_addon(): void
+    {
+        // The live database has products.addons_enabled; the repo's migrations don't create it, so add it for this test.
+        if(!\Illuminate\Support\Facades\Schema::hasColumn('products','addons_enabled')) {
+            \Illuminate\Support\Facades\Schema::table('products',fn($t)=>$t->boolean('addons_enabled')->default(false));
+        }
+        $laptops=Category::create(['name'=>'Used Laptops','slug'=>'used-laptops']);
+        $phones=Category::create(['name'=>'Mobile Phones','slug'=>'mobile-phones']);
+        $warranty=['id'=>'w','label'=>'Warranty','options'=>[['id'=>'m3','label'=>'3 months','price'=>0],['id'=>'m6','label'=>'6 months','price'=>10000],['id'=>'y1','label'=>'1 year','price'=>16000]]];
+        $laptop=Product::create(['category_id'=>$laptops->id,'name'=>'Dell Latitude','slug'=>'dell-latitude','sku'=>'DL-1','price'=>37000,'stock'=>5,'is_active'=>true,'addons_enabled'=>true,'addons'=>[$warranty]]);
+        $phone=Product::create(['category_id'=>$phones->id,'name'=>'iPhone 15','slug'=>'iphone-15','sku'=>'IP-1','price'=>210000,'stock'=>5,'is_active'=>true,'addons_enabled'=>true,'addons'=>[$warranty]]);
+        Coupon::create(['code'=>'LAPTOP1Y','type'=>'fixed','value'=>11000,'category_id'=>$laptops->id,'addon_group'=>'Warranty','addon_option'=>'1 Year','is_active'=>true]);
+        Coupon::create(['code'=>'LAPTOP6M','type'=>'percent','value'=>100,'category_id'=>$laptops->id,'addon_group'=>'warranty','addon_option'=>'6 month','is_active'=>true]);
+
+        // Laptop + 1 year: Rs 11,000 off the warranty only (37,000 + 16,000 - 11,000).
+        $this->postJson('/api/coupons/validate',['coupon_code'=>'LAPTOP1Y','items'=>[['product_id'=>$laptop->id,'quantity'=>1,'addons'=>['w'=>'y1']]]])
+            ->assertOk()->assertJsonPath('discount','11000.00')->assertJsonPath('total','42000.00');
+
+        // 100% coupon on the 6-month warranty never touches the laptop price.
+        $this->postJson('/api/coupons/validate',['coupon_code'=>'LAPTOP6M','items'=>[['product_id'=>$laptop->id,'quantity'=>1,'addons'=>['w'=>'m6']]]])
+            ->assertOk()->assertJsonPath('discount','10000.00')->assertJsonPath('total','37000.00');
+
+        // Wrong warranty, no warranty, or wrong category: refused.
+        $this->postJson('/api/coupons/validate',['coupon_code'=>'LAPTOP1Y','items'=>[['product_id'=>$laptop->id,'quantity'=>1,'addons'=>['w'=>'m6']]]])->assertStatus(422);
+        $this->postJson('/api/coupons/validate',['coupon_code'=>'LAPTOP1Y','items'=>[['product_id'=>$laptop->id,'quantity'=>1]]])->assertStatus(422);
+        $this->postJson('/api/coupons/validate',['coupon_code'=>'LAPTOP1Y','items'=>[['product_id'=>$phone->id,'quantity'=>1,'addons'=>['w'=>'y1']]]])->assertStatus(422);
+
+        // A fixed coupon is applied once and capped at the add-on price, even with an expensive cart.
+        $this->postJson('/api/orders',[
+            'customer_name'=>'Ali Raza','phone'=>'03001234567','city'=>'Karachi','address'=>'House 20, Clifton, Karachi','coupon_code'=>'LAPTOP1Y',
+            'items'=>[['product_id'=>$laptop->id,'quantity'=>2,'addons'=>['w'=>'y1']],['product_id'=>$phone->id,'quantity'=>1]],
+        ])->assertCreated()->assertJsonPath('order.discount','11000.00');
+    }
+
     public function test_seo_routes_return_expected_content_types(): void
     {
         $this->get('/sitemap.xml')->assertOk()->assertHeader('Content-Type','application/xml');

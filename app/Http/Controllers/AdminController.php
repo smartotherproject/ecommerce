@@ -607,6 +607,7 @@ class AdminController extends Controller
             'testimonials'=>['name'=>'required|string|max:120','role'=>'nullable|string|max:120','content'=>'required|string|max:2000','rating'=>'nullable|integer|min:1|max:5','image'=>'nullable|file|mimes:jpg,jpeg,png,gif,webp,avif|max:4096','is_active'=>'nullable|boolean'],
             'subscribers'=>['email'=>['required','email','max:255',$unique('subscribers','email')],'is_active'=>'nullable|boolean'],
             'coupons'=>['code'=>['required','string','max:50',$unique('coupons','code')],'type'=>'required|in:percent,fixed','value'=>['required','numeric','min:0.01',Rule::when(request('type')==='percent','max:100')],
+                'category_id'=>'nullable|integer|exists:categories,id','addon_group'=>'nullable|string|max:80|required_with:addon_option','addon_option'=>'nullable|string|max:120',
                 'minimum_order'=>'nullable|numeric|min:0','maximum_discount'=>'nullable|numeric|min:0.01','usage_limit'=>'nullable|integer|min:1',
                 'starts_at'=>'nullable|date','expires_at'=>'nullable|date|after:starts_at','is_active'=>'nullable|boolean'],
             'contacts'=>['name'=>'required|string|max:120','email'=>'nullable|email|max:255','phone'=>'nullable|string|max:30','subject'=>'nullable|string|max:180','message'=>'required|string|max:5000','is_read'=>'nullable|boolean'],

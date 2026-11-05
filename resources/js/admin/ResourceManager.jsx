@@ -16,7 +16,7 @@ export const resourceConfigs = {
     banners: { title: 'Banners', singular: 'Banner', fields: [['title', 'Title', 'text', true], ['subtitle', 'Subtitle', 'textarea'], ['button_text', 'Button text'], ['url', 'Button URL'], ['image', 'Image', 'file'], ['sort_order', 'Sort order', 'number'], ['is_active', 'Active', 'checkbox']], columns: [['image_url', 'Image', 'image'], ['title', 'Title'], ['sort_order', 'Order'], ['is_active', 'Status', 'boolean']], multipart: true },
     faqs: { title: 'FAQs', singular: 'FAQ', fields: [['question', 'Question', 'text', true], ['answer', 'Answer', 'textarea', true], ['sort_order', 'Sort order', 'number'], ['is_active', 'Active', 'checkbox']], columns: [['question', 'Question'], ['sort_order', 'Order'], ['is_active', 'Status', 'boolean']] },
     testimonials: { title: 'Testimonials', singular: 'Testimonial', fields: [['name', 'Name', 'text', true], ['role', 'Designation'], ['content', 'Testimonial', 'textarea', true], ['rating', 'Rating', 'number'], ['image', 'Photo', 'file'], ['is_active', 'Active', 'checkbox']], columns: [['image_url', 'Photo', 'image'], ['name', 'Name'], ['role', 'Designation'], ['rating', 'Rating'], ['is_active', 'Status', 'boolean']], multipart: true },
-    coupons: { title: 'Discount Coupons', singular: 'Coupon', fields: [['code', 'Coupon code', 'text', true], ['type', 'Discount type', 'coupon-type', true], ['value', 'Discount value', 'number', true], ['minimum_order', 'Minimum order', 'number'], ['maximum_discount', 'Maximum discount', 'number'], ['usage_limit', 'Usage limit', 'number'], ['starts_at', 'Starts at', 'datetime-local'], ['expires_at', 'Expires at', 'datetime-local'], ['is_active', 'Active', 'checkbox']], columns: [['code', 'Code'], ['type', 'Type'], ['value', 'Value'], ['used_count', 'Used'], ['is_active', 'Status', 'boolean']] },
+    coupons: { title: 'Discount Coupons', singular: 'Coupon', fields: [['code', 'Coupon code', 'text', true], ['type', 'Discount type', 'coupon-type', true], ['value', 'Discount value', 'number', true], ['category_id', 'Only for category (optional)', 'category-select'], ['addon_group', 'Only on add-on group, e.g. Warranty (optional)'], ['addon_option', 'Only on add-on option, e.g. 1 year (optional)'], ['minimum_order', 'Minimum order', 'number'], ['maximum_discount', 'Maximum discount', 'number'], ['usage_limit', 'Usage limit', 'number'], ['starts_at', 'Starts at', 'datetime-local'], ['expires_at', 'Expires at', 'datetime-local'], ['is_active', 'Active', 'checkbox']], columns: [['code', 'Code'], ['type', 'Type'], ['value', 'Value'], ['addon_option', 'Add-on only'], ['used_count', 'Used'], ['is_active', 'Status', 'boolean']] },
     subscribers: { title: 'Subscribers', singular: 'Subscriber', fields: [['email', 'Email', 'email', true], ['is_active', 'Active', 'checkbox']], columns: [['email', 'Email'], ['is_active', 'Status', 'boolean'], ['created_at', 'Subscribed', 'date']] },
 };
 
@@ -279,7 +279,7 @@ function ResourceForm({ open, close, resource, config, item, saved }) {
     const [brands, setBrands] = useState([]);
     useEffect(() => setValues(initial), [initial, open]);
     useEffect(() => {
-        if (!open || resource !== 'products') return;
+        if (!open || !['products', 'coupons'].includes(resource)) return;
         Promise.all([
             api.get('/cp/categories', { params: { per_page: 100 } }),
             api.get('/cp/brands', { params: { per_page: 100 } }),
@@ -331,7 +331,7 @@ function Field({ name, label, type, value, onChange, required, existing = [], op
     if (type === 'category-select') {
         return <label>{label}{required ? ' *' : ''}
             <select required={required} value={value || ''} onChange={(e) => onChange(e.target.value)}>
-                <option value="">Select category</option>
+                <option value="">{required ? 'Select category' : 'Any category'}</option>
                 {(options.categories || []).map((cat) => <option key={cat.id} value={cat.id}>{cat.name}</option>)}
             </select>
         </label>;

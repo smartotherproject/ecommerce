@@ -13,6 +13,7 @@ class Coupon extends Model
     {
         return [
             'value'=>'decimal:2',
+            'category_id'=>'integer',
             'minimum_order'=>'decimal:2',
             'maximum_discount'=>'decimal:2',
             'usage_limit'=>'integer',
