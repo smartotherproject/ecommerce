@@ -8,7 +8,8 @@ const sections = [
     ['Brand & theme', [['site_name', 'Site name'], ['logo', 'Logo', 'file'], ['favicon', 'Favicon', 'file'], ['primary_color', 'Primary color', 'color'], ['secondary_color', 'Accent color', 'color'], ['dark_color', 'Dark/navy color', 'color']]],
     ['Business details', [['phone', 'Phone'], ['email', 'Email', 'email'], ['address', 'Address', 'textarea'], ['whatsapp', 'WhatsApp number'], ['facebook', 'Facebook URL', 'url'], ['instagram', 'Instagram URL', 'url'], ['youtube', 'YouTube URL', 'url']]],
     ['Homepage & footer', [['announcement', 'Announcement text', 'textarea'], ['hero_title', 'Hero title'], ['hero_subtitle', 'Hero subtitle', 'textarea'], ['footer_text', 'Footer text', 'textarea'], ['newsletter_title', 'Newsletter title']]],
-    ['SEO & indexing', [['meta_title', 'Default SEO title'], ['meta_description', 'Default SEO description', 'textarea'], ['robots', 'Robots directives'], ['google_analytics_id', 'Google Analytics ID (e.g. G-XXXXXXXX)']]],
+    ['Order complete page', [['order_success_message', 'Message shown after an order is placed', 'message']]],
+    ['SEO & indexing', [['meta_title', 'Default SEO title'], ['meta_description', 'Default SEO description', 'textarea'], ['robots', 'Robots meta tag (e.g. index, follow)'], ['google_analytics_id', 'Google Analytics ID (e.g. G-XXXXXXXX)'], ['robots_txt', 'robots.txt file', 'robots']]],
     ['Tracking & custom code', [
         ['header_scripts', 'Header code (Meta Pixel, GTM, custom scripts — injected in <head>)', 'code'],
         ['footer_scripts', 'Body / footer code (optional noscript tags — injected before </body>)', 'code'],
@@ -63,6 +64,27 @@ function SettingField({ name, label, type, value, onChange }) {
                     onChange={(e) => onChange(e.target.value)}
                 />
                 <small>Paste the full snippet from Meta / Google / other tools. Saved as-is into the storefront HTML.</small>
+            </label>
+        );
+    }
+    if (type === 'message') {
+        return (
+            <label className="full">
+                {label}
+                <textarea rows="5" value={value || ''} placeholder="Your order is on hold until the delivery charges are paid in advance…" onChange={(e) => onChange(e.target.value)} />
+                <small>Shown on the thank-you page under the order details. You can use {'{order_number}'} and {'{total}'}. Leave empty to hide.</small>
+            </label>
+        );
+    }
+    if (type === 'robots') {
+        return (
+            <label className="full settings-code-field">
+                {label}
+                <textarea rows="10" spellCheck={false} value={value || ''} onChange={(e) => onChange(e.target.value)} />
+                <small>
+                    Served at <a href="/robots.txt" target="_blank" rel="noreferrer">/robots.txt</a>. Clear the box and save to restore the default.
+                    {' '}Careful: <code>Disallow: /</code> hides the whole site from Google.
+                </small>
             </label>
         );
     }

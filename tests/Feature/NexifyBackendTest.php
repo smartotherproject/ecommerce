@@ -66,6 +66,42 @@ class NexifyBackendTest extends TestCase
         $this->assertDatabaseHas('coupons',['id'=>$coupon->id,'used_count'=>1]);
     }
 
+    public function test_category_coupon_only_discounts_selected_category(): void
+    {
+        $laptops=Category::create(['name'=>'Laptops','slug'=>'laptops']);
+        $mice=Category::create(['name'=>'Mice','slug'=>'mice']);
+        $laptop=Product::create(['category_id'=>$laptops->id,'name'=>'L','slug'=>'l','sku'=>'L-1','price'=>100000,'stock'=>5,'is_active'=>true]);
+        $mouse=Product::create(['category_id'=>$mice->id,'name'=>'M','slug'=>'m','sku'=>'M-1','price'=>2000,'stock'=>5,'is_active'=>true]);
+        Coupon::create(['code'=>'LAP10','type'=>'percent','value'=>10,'category_ids'=>[$laptops->id],'is_active'=>true]);
+
+        $this->postJson('/api/coupons/validate',['coupon_code'=>'LAP10','items'=>[['product_id'=>$mouse->id,'quantity'=>1]]])
+            ->assertUnprocessable()->assertJsonPath('errors.coupon_code.0','Not eligible: this coupon only applies to Laptops products.');
+
+        // 10% of the laptop only, mouse ignored.
+        $this->postJson('/api/coupons/validate',['coupon_code'=>'LAP10','items'=>[['product_id'=>$laptop->id,'quantity'=>1],['product_id'=>$mouse->id,'quantity'=>1]]])
+            ->assertOk()->assertJsonPath('discount','10000.00')->assertJsonPath('total','92000.00');
+    }
+
+    public function test_addon_coupon_only_discounts_selected_addon_price(): void
+    {
+        $laptops=Category::create(['name'=>'Laptops','slug'=>'laptops']);
+        $product=Product::create(['category_id'=>$laptops->id,'name'=>'L','slug'=>'l','sku'=>'L-1','price'=>100000,'stock'=>5,'is_active'=>true,
+            'addons_enabled'=>true,'addons'=>[
+                ['id'=>'ram','label'=>'RAM','options'=>[['id'=>'8gb','label'=>'8GB','price'=>0],['id'=>'16gb','label'=>'16GB','price'=>8000]]],
+                ['id'=>'warranty','label'=>'Warranty','options'=>[['id'=>'3m','label'=>'3 Months','price'=>0],['id'=>'1y','label'=>'1 Year','price'=>5000]]],
+            ]]);
+        Coupon::create(['code'=>'WAR50','type'=>'percent','value'=>50,'addon_groups'=>['Warranty'],'is_active'=>true]);
+
+        $this->postJson('/api/coupons/validate',['coupon_code'=>'WAR50','items'=>[['product_id'=>$product->id,'quantity'=>1,'addons'=>['ram'=>'16gb','warranty'=>'3m']]]])
+            ->assertUnprocessable();
+
+        // 2 laptops with 1 year warranty (5000 each) → 50% of 10000.
+        $this->postJson('/api/orders',[
+            'customer_name'=>'Sara Khan','phone'=>'03001234567','city'=>'Karachi','address'=>'House 20, Clifton, Karachi','coupon_code'=>'WAR50',
+            'items'=>[['product_id'=>$product->id,'quantity'=>2,'addons'=>['ram'=>'16gb','warranty'=>'1y']]],
+        ])->assertCreated()->assertJsonPath('order.discount','5000.00')->assertJsonPath('order.subtotal','226000.00');
+    }
+
     public function test_seo_routes_return_expected_content_types(): void
     {
         $this->get('/sitemap.xml')->assertOk()->assertHeader('Content-Type','application/xml');

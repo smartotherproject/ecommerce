@@ -1,4 +1,4 @@
-import { ArrowLeft, Download, Eye, FileSpreadsheet, Pencil, Plus, Printer, Search, Trash2, Upload } from 'lucide-react';
+import { ArrowLeft, Check, ChevronDown, Download, Eye, FileSpreadsheet, Pencil, Plus, Printer, Search, Trash2, Upload, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api, listFrom, messageFrom, toFormData, unwrap } from '../api/client';
@@ -16,7 +16,7 @@ export const resourceConfigs = {
     banners: { title: 'Banners', singular: 'Banner', fields: [['title', 'Title', 'text', true], ['subtitle', 'Subtitle', 'textarea'], ['button_text', 'Button text'], ['url', 'Button URL'], ['image', 'Image', 'file'], ['sort_order', 'Sort order', 'number'], ['is_active', 'Active', 'checkbox']], columns: [['image_url', 'Image', 'image'], ['title', 'Title'], ['sort_order', 'Order'], ['is_active', 'Status', 'boolean']], multipart: true },
     faqs: { title: 'FAQs', singular: 'FAQ', fields: [['question', 'Question', 'text', true], ['answer', 'Answer', 'textarea', true], ['sort_order', 'Sort order', 'number'], ['is_active', 'Active', 'checkbox']], columns: [['question', 'Question'], ['sort_order', 'Order'], ['is_active', 'Status', 'boolean']] },
     testimonials: { title: 'Testimonials', singular: 'Testimonial', fields: [['name', 'Name', 'text', true], ['role', 'Designation'], ['content', 'Testimonial', 'textarea', true], ['rating', 'Rating', 'number'], ['image', 'Photo', 'file'], ['is_active', 'Active', 'checkbox']], columns: [['image_url', 'Photo', 'image'], ['name', 'Name'], ['role', 'Designation'], ['rating', 'Rating'], ['is_active', 'Status', 'boolean']], multipart: true },
-    coupons: { title: 'Discount Coupons', singular: 'Coupon', fields: [['code', 'Coupon code', 'text', true], ['type', 'Discount type', 'coupon-type', true], ['value', 'Discount value', 'number', true], ['minimum_order', 'Minimum order', 'number'], ['maximum_discount', 'Maximum discount', 'number'], ['usage_limit', 'Usage limit', 'number'], ['starts_at', 'Starts at', 'datetime-local'], ['expires_at', 'Expires at', 'datetime-local'], ['is_active', 'Active', 'checkbox']], columns: [['code', 'Code'], ['type', 'Type'], ['value', 'Value'], ['used_count', 'Used'], ['is_active', 'Status', 'boolean']] },
+    coupons: { title: 'Discount Coupons', singular: 'Coupon', fields: [['code', 'Coupon code', 'text', true], ['type', 'Discount type', 'coupon-type', true], ['value', 'Discount value', 'number', true], ['minimum_order', 'Minimum order', 'number'], ['maximum_discount', 'Maximum discount', 'number'], ['category_ids', 'Only for categories', 'coupon-categories'], ['addon_groups', 'Only on add-ons', 'coupon-addons'], ['usage_limit', 'Usage limit', 'number'], ['starts_at', 'Starts at', 'datetime-local'], ['expires_at', 'Expires at', 'datetime-local'], ['is_active', 'Active', 'checkbox']], columns: [['code', 'Code'], ['type', 'Type'], ['value', 'Value'], ['applies_to', 'Applies to'], ['used_count', 'Used'], ['is_active', 'Status', 'boolean']] },
     subscribers: { title: 'Subscribers', singular: 'Subscriber', fields: [['email', 'Email', 'email', true], ['is_active', 'Active', 'checkbox']], columns: [['email', 'Email'], ['is_active', 'Status', 'boolean'], ['created_at', 'Subscribed', 'date']] },
 };
 
@@ -28,6 +28,7 @@ function fieldInitial(key, type, item) {
     if (type === 'files') return [];
     if (type === 'checkbox') return Boolean(item?.[key]);
     if (type === 'product-addons') return normalizeCatalogList(item?.[key]);
+    if (type === 'coupon-categories' || type === 'coupon-addons') return Array.isArray(item?.[key]) ? item[key] : [];
     if (type === 'json' && item?.[key] && typeof item[key] !== 'string') return JSON.stringify(item[key], null, 2);
     if (type === 'condition-select') return item?.[key] || 'new';
     return item?.[key] ?? '';
@@ -277,7 +278,16 @@ function ResourceForm({ open, close, resource, config, item, saved }) {
     const [values, setValues] = useState(initial), [busy, setBusy] = useState(false), [error, setError] = useState('');
     const [categories, setCategories] = useState([]);
     const [brands, setBrands] = useState([]);
+    const [addonGroups, setAddonGroups] = useState([]);
     useEffect(() => setValues(initial), [initial, open]);
+    useEffect(() => {
+        if (!open || resource !== 'coupons') return;
+        api.get('/cp/coupon-options').then((r) => {
+            const data = unwrap(r) || {};
+            setCategories(data.categories || []);
+            setAddonGroups(data.addon_groups || []);
+        }).catch(() => { setCategories([]); setAddonGroups([]); });
+    }, [open, resource]);
     useEffect(() => {
         if (!open || resource !== 'products') return;
         Promise.all([
@@ -321,13 +331,30 @@ function ResourceForm({ open, close, resource, config, item, saved }) {
     };
     return <Modal open={open} onClose={close} title={`${item ? 'Edit' : 'Add'} ${config.singular}`} wide><form className={`resource-form form-grid ${config.fields.some(([, , type]) => type === 'editor') ? 'has-editor' : ''}`} onSubmit={submit}>{config.fields.map(([key, label, type = 'text', required]) => {
         if (key === 'addons' && !values.addons_enabled) return null;
-        return <Field key={key} name={key} label={label} type={type} required={required} value={values[key]} existing={previewUrlsForField(key, item)} options={{ categories, brands }} onChange={(value) => setValues({ ...values, [key]: value })} />;
+        return <Field key={key} name={key} label={label} type={type} required={required} value={values[key]} existing={previewUrlsForField(key, item)} options={{ categories, brands, addonGroups }} onChange={(value) => setValues({ ...values, [key]: value })} />;
     })}{error && <p className="form-error full">{error}</p>}<div className="modal-actions full"><button type="button" className="btn btn-ghost" onClick={close}>Cancel</button><button className="btn" disabled={busy}>{busy ? 'Saving…' : `Save ${config.singular}`}</button></div></form></Modal>;
 }
 
 function Field({ name, label, type, value, onChange, required, existing = [], options = {} }) {
     if (type === 'checkbox') return <label className="check full"><input name={name} type="checkbox" checked={Boolean(value)} onChange={(e) => onChange(e.target.checked ? 1 : 0)} /><span>{label}</span></label>;
     if (type === 'coupon-type') return <label>{label}<select required={required} value={value || 'percent'} onChange={(e) => onChange(e.target.value)}><option value="percent">Percentage</option><option value="fixed">Fixed amount</option></select></label>;
+    if (type === 'coupon-categories' || type === 'coupon-addons') {
+        const isCat = type === 'coupon-categories';
+        const choices = isCat
+            ? (options.categories || []).map((c) => ({ value: Number(c.id), label: c.name }))
+            : (options.addonGroups || []).map((g) => ({ value: g, label: g }));
+        // Keep saved values visible even if they no longer exist in the list.
+        const selected = Array.isArray(value) ? value.map((v) => (isCat ? Number(v) : v)) : [];
+        selected.forEach((v) => { if (!choices.some((c) => c.value === v)) choices.push({ value: v, label: isCat ? `#${v}` : v }); });
+        return <MultiSelect
+            label={label}
+            choices={choices}
+            selected={selected}
+            onChange={onChange}
+            placeholder={isCat ? 'All categories' : 'Full item price (no add-on limit)'}
+            empty={isCat ? 'No categories yet.' : 'No product add-ons yet.'}
+        />;
+    }
     if (type === 'category-select') {
         return <label>{label}{required ? ' *' : ''}
             <select required={required} value={value || ''} onChange={(e) => onChange(e.target.value)}>
@@ -468,6 +495,42 @@ function ProductAddonsBuilder({ value, onChange }) {
             </div>
         </div>
     );
+}
+
+function MultiSelect({ label, choices, selected, onChange, placeholder, empty }) {
+    const [open, setOpen] = useState(false);
+    const ref = useRef(null);
+    useEffect(() => {
+        if (!open) return undefined;
+        const close = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+        const esc = (e) => { if (e.key === 'Escape') setOpen(false); };
+        document.addEventListener('mousedown', close);
+        document.addEventListener('keydown', esc);
+        return () => { document.removeEventListener('mousedown', close); document.removeEventListener('keydown', esc); };
+    }, [open]);
+    const toggle = (v) => onChange(selected.includes(v) ? selected.filter((x) => x !== v) : [...selected, v]);
+    const labelOf = (v) => choices.find((c) => c.value === v)?.label ?? v;
+    return <div className="multi-select" ref={ref}>
+        <span className="multi-select-label">{label}</span>
+        <div className={`multi-select-trigger${open ? ' open' : ''}`} role="button" tabIndex={0} aria-expanded={open}
+            onClick={() => setOpen((o) => !o)}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen((o) => !o); } }}>
+            {selected.length
+                ? selected.map((v) => <span className="multi-chip" key={v}>{labelOf(v)}<button type="button" aria-label={`Remove ${labelOf(v)}`} onClick={(e) => { e.stopPropagation(); toggle(v); }}><X /></button></span>)
+                : <span className="multi-placeholder">{placeholder}</span>}
+            <ChevronDown className="multi-caret" />
+        </div>
+        {open && <div className="multi-select-menu">
+            {!choices.length && <p className="multi-empty">{empty}</p>}
+            {choices.map((c) => {
+                const on = selected.includes(c.value);
+                return <button type="button" key={c.value} className={`multi-option${on ? ' selected' : ''}`} onClick={() => toggle(c.value)}>
+                    <span className="multi-box">{on && <Check />}</span>{c.label}
+                </button>;
+            })}
+            {!!selected.length && <button type="button" className="multi-clear" onClick={() => onChange([])}>Clear selection</button>}
+        </div>}
+    </div>;
 }
 
 function ImageField({ label, type, value, existing = [], onChange }) {

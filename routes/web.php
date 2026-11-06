@@ -21,6 +21,7 @@ Route::prefix('api')->group(function () {
     Route::get('/pages/{slug}', [StoreController::class, 'page']);
     Route::post('/coupons/validate', [StoreController::class, 'coupon'])->middleware('throttle:20,1');
     Route::post('/orders', [StoreController::class, 'order'])->middleware('throttle:20,1');
+    Route::get('/orders/{number}', [StoreController::class, 'orderSummary'])->where('number','[A-Za-z0-9-]+')->middleware('throttle:30,1');
     Route::post('/subscribers', [StoreController::class, 'subscribe'])->middleware('throttle:10,1');
     Route::post('/contact', [StoreController::class, 'contact'])->middleware('throttle:10,1');
     Route::post('/quote-requests', [StoreController::class, 'quoteRequest'])->middleware('throttle:8,1');
@@ -52,6 +53,7 @@ Route::prefix('api')->group(function () {
             Route::get('/quote-requests/{id}', [AdminController::class, 'quoteRequest'])->whereNumber('id');
             Route::patch('/quote-requests/{id}', [AdminController::class, 'updateQuoteRequest'])->whereNumber('id');
             Route::post('/media', [AdminController::class, 'uploadMedia']);
+            Route::get('/coupon-options', [AdminController::class, 'couponOptions']);
             Route::get('/products/import-template', [AdminController::class, 'productImportTemplate']);
             Route::post('/products/import', [AdminController::class, 'importProducts']);
             Route::get('/push', [AdminPushController::class, 'overview']);

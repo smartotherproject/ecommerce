@@ -117,19 +117,22 @@ class StoreController extends Controller
             'items.*.addons.*'=>'nullable|string|max:80',
         ]);
         $products=Product::active()->whereIn('id',collect($data['items'])->pluck('product_id'))->get()->keyBy('id');
-        $subtotalCents=collect($data['items'])->sum(function($item) use($products) {
+        $subtotalCents=0; $couponLines=[];
+        foreach($data['items'] as $item) {
             $product=$products->get($item['product_id']);
             if(!$product) throw ValidationException::withMessages(['items'=>['A selected product is unavailable.']]);
             $resolved=ProductAddons::forProduct($product,$item['addons']??null);
             $base=$product->is_sale && $product->sale_price!==null ? $product->sale_price : $product->price;
             $price=round(((float)$base)+$resolved['extra'],2);
-            return (int) round($price*100)*$item['quantity'];
-        });
-        [$coupon,$discountCents]=$this->resolveCoupon($data['coupon_code'],$subtotalCents);
+            $lineCents=(int) round($price*100)*$item['quantity'];
+            $subtotalCents+=$lineCents;
+            $couponLines[]=$this->couponLine($product,$item['quantity'],$lineCents,$resolved['addons']);
+        }
+        [$coupon,$discountCents]=$this->resolveCoupon($data['coupon_code'],$subtotalCents,$couponLines);
 
         return response()->json([
             'message'=>"Coupon {$coupon->code} applied.",
-            'coupon'=>['code'=>$coupon->code,'type'=>$coupon->type,'value'=>$coupon->value],
+            'coupon'=>['code'=>$coupon->code,'type'=>$coupon->type,'value'=>$coupon->value,'applies_to'=>$coupon->applies_to],
             'subtotal'=>number_format($subtotalCents/100,2,'.',''),
             'discount'=>number_format($discountCents/100,2,'.',''),
             'total'=>number_format(($subtotalCents-$discountCents)/100,2,'.',''),
@@ -147,7 +150,7 @@ class StoreController extends Controller
             'items.*.addons'=>'nullable|array','items.*.addons.*'=>'nullable|string|max:80',
         ]);
         $order=DB::transaction(function() use($data) {
-            $lines=[]; $subtotalCents=0; $stockNeed=[];
+            $lines=[]; $subtotalCents=0; $stockNeed=[]; $couponLines=[];
             foreach($data['items'] as $item) {
                 $pid=(int)$item['product_id'];
                 $stockNeed[$pid]=($stockNeed[$pid]??0)+(int)$item['quantity'];
@@ -160,11 +163,12 @@ class StoreController extends Controller
                 $base=$product->is_sale && $product->sale_price!==null ? $product->sale_price : $product->price;
                 $price=round(((float)$base)+$resolved['extra'],2);
                 $unitCents=(int) round($price*100); $totalCents=$unitCents*$item['quantity']; $subtotalCents+=$totalCents;
+                $couponLines[]=$this->couponLine($product,$item['quantity'],$totalCents,$resolved['addons']);
                 $total=number_format($totalCents/100,2,'.','');
                 $lines[]=[$product,$item['quantity'],number_format($price,2,'.',''),$total,$resolved['addons'],$resolved['summary']];
             }
             foreach($stockNeed as $pid=>$qty) Product::whereKey($pid)->decrement('stock',$qty);
-            [$coupon,$discountCents]=$this->resolveCoupon($data['coupon_code']??null,$subtotalCents,true);
+            [$coupon,$discountCents]=$this->resolveCoupon($data['coupon_code']??null,$subtotalCents,$couponLines,true);
             $city=Shipping::assertValidCity($data['city']);
             $shippingAmount=Shipping::chargeForCity($city);
             $shippingCents=(int) round($shippingAmount*100);
@@ -183,6 +187,21 @@ class StoreController extends Controller
             return $order->load('items');
         },3);
         return response()->json(['message'=>'Order placed successfully.','order'=>$order],201);
+    }
+
+    /** Public order summary for the thank-you page. No phone/address is returned. */
+    public function orderSummary(string $number): JsonResponse
+    {
+        $order=Order::with('items.product:id,slug')->where('order_number',$number)->firstOrFail();
+        return response()->json(['order'=>[
+            'order_number'=>$order->order_number,'created_at'=>$order->created_at,'status'=>$order->status,'payment_method'=>$order->payment_method,
+            'city'=>$order->city,'coupon_code'=>$order->coupon_code,
+            'subtotal'=>$order->subtotal,'shipping'=>$order->shipping,'discount'=>$order->discount,'total'=>$order->total,
+            'items'=>$order->items->map(fn($i)=>[
+                'name'=>$i->name,'quantity'=>$i->quantity,'unit_price'=>$i->unit_price,'total'=>$i->total,
+                'slug'=>$i->product?->slug,'options'=>['summary'=>$i->options['summary']??[]],
+            ])->values(),
+        ]]);
     }
 
     public function subscribe(Request $request): JsonResponse
@@ -277,9 +296,29 @@ class StoreController extends Controller
         return response($xml,200,['Content-Type'=>'application/xml']);
     }
 
-    public function robots() { return response("User-agent: *\nAllow: /\nDisallow: /api/cp/\nSitemap: ".url('/sitemap.xml')."\n",200,['Content-Type'=>'text/plain']); }
+    public function robots() { return response(\App\Support\Robots::content(),200,['Content-Type'=>'text/plain; charset=UTF-8']); }
 
-    private function resolveCoupon(?string $code, int $subtotalCents, bool $lock=false): array
+    /** Cart line info a coupon needs: category, line total and each paid add-on (cents × qty). */
+    private function couponLine(Product $product, int $qty, int $lineCents, ?array $selected): array
+    {
+        $addons=[];
+        if($selected) {
+            $catalog=ProductAddons::catalogMap(ProductAddons::catalogForProduct($product));
+            foreach($selected as $groupId=>$optionId) {
+                $group=$catalog[$groupId]??null;
+                if(!$group) continue;
+                $option=collect($group['options'])->firstWhere('id',$optionId);
+                if(!$option) continue;
+                $addons[]=[
+                    'keys'=>array_unique([Str::slug($group['label']),Str::slug($groupId)]),
+                    'cents'=>(int) round(((float)$option['price'])*100)*$qty,
+                ];
+            }
+        }
+        return ['category_id'=>(int)$product->category_id,'cents'=>$lineCents,'addons'=>$addons];
+    }
+
+    private function resolveCoupon(?string $code, int $subtotalCents, array $lines, bool $lock=false): array
     {
         if(!$code) return [null,0];
         $query=Coupon::where('code',Str::upper(trim($code)));
@@ -291,11 +330,30 @@ class StoreController extends Controller
         if($coupon->usage_limit!==null && $coupon->used_count >= $coupon->usage_limit) throw ValidationException::withMessages(['coupon_code'=>['This coupon usage limit has been reached.']]);
         if($subtotalCents < (int) round(((float)$coupon->minimum_order)*100)) throw ValidationException::withMessages(['coupon_code'=>['Your order does not meet this coupon minimum.']]);
 
+        // Category limit: only lines from the chosen categories count.
+        $categoryIds=array_map('intval',$coupon->category_ids??[]);
+        if($categoryIds) {
+            $lines=array_values(array_filter($lines,fn($l)=>in_array($l['category_id'],$categoryIds,true)));
+            if(!$lines) throw ValidationException::withMessages(['coupon_code'=>['Not eligible: this coupon only applies to '.implode(', ',$coupon->categoryNames()).' products.']]);
+        }
+
+        // Add-on limit: discount only the price of the chosen add-ons (e.g. Warranty).
+        $addonKeys=array_map(fn($g)=>Str::slug($g),$coupon->addon_groups??[]);
+        if($addonKeys) {
+            $baseCents=0;
+            foreach($lines as $line) foreach($line['addons'] as $addon) {
+                if(array_intersect($addon['keys'],$addonKeys)) $baseCents+=$addon['cents'];
+            }
+            if($baseCents<=0) throw ValidationException::withMessages(['coupon_code'=>['Not eligible: this coupon only applies to the '.implode(', ',$coupon->addon_groups).' add-on. Select a paid '.implode(', ',$coupon->addon_groups).' option first.']]);
+        } else {
+            $baseCents=array_sum(array_column($lines,'cents'));
+        }
+
         $discountCents=$coupon->type==='percent'
-            ? (int) round($subtotalCents*((float)$coupon->value)/100)
+            ? (int) round($baseCents*((float)$coupon->value)/100)
             : (int) round(((float)$coupon->value)*100);
         if($coupon->maximum_discount!==null) $discountCents=min($discountCents,(int) round(((float)$coupon->maximum_discount)*100));
 
-        return [$coupon,min($discountCents,$subtotalCents)];
+        return [$coupon,min($discountCents,$baseCents,$subtotalCents)];
     }
 }

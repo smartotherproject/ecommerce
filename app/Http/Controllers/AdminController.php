@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\{Banner, Brand, Category, Contact, Coupon, Faq, Order, Page, Post, Product, QuoteRequest, Setting, Subscriber, Testimonial};
 use App\Support\ProductAddons;
+use App\Support\Robots;
 use App\Support\Shipping;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\JsonResponse;
@@ -118,9 +119,27 @@ class AdminController extends Controller
         return response()->json(['order'=>$order->fresh()->load('items','statusHistory.user')]);
     }
 
+    /** Choices for the coupon form: categories and every add-on group name used on products. */
+    public function couponOptions(): JsonResponse
+    {
+        $groups=[];
+        Product::whereNotNull('addons')->where('addons_enabled',true)->select('id','addons','addons_enabled')->chunkById(200,function($products) use(&$groups) {
+            foreach($products as $product) foreach(ProductAddons::catalogForProduct($product) as $group) {
+                $groups[Str::slug($group['label'])]??=$group['label'];
+            }
+        });
+        natcasesort($groups);
+        return response()->json(['data'=>[
+            'categories'=>Category::orderBy('name')->get(['id','name']),
+            'addon_groups'=>array_values($groups),
+        ]]);
+    }
+
     public function settings(): JsonResponse
     {
-        return response()->json(['data'=>collect(Setting::flat())->except(['vapid_private_key'])->all()]);
+        $data=collect(Setting::flat())->except(['vapid_private_key'])->all();
+        if(trim((string)($data['robots_txt']??''))==='') $data['robots_txt']=Robots::default();
+        return response()->json(['data'=>$data]);
     }
 
     public function shipping(): JsonResponse
@@ -531,6 +550,8 @@ class AdminController extends Controller
             'meta_title'=>'nullable|string|max:255',
             'meta_description'=>'nullable|string|max:1000',
             'robots'=>'nullable|string|max:255',
+            'robots_txt'=>'nullable|string|max:20000',
+            'order_success_message'=>'nullable|string|max:5000',
             'google_analytics_id'=>'nullable|string|max:80',
             'header_scripts'=>'nullable|string|max:50000',
             'footer_scripts'=>'nullable|string|max:50000',
@@ -561,8 +582,9 @@ class AdminController extends Controller
             'site_name'=>'branding','primary_color'=>'theme','secondary_color'=>'theme','dark_color'=>'theme',
             'phone'=>'contact','email'=>'contact','address'=>'contact','whatsapp'=>'contact','facebook'=>'social','instagram'=>'social','youtube'=>'social',
             'announcement'=>'homepage','hero_title'=>'homepage','hero_subtitle'=>'homepage','newsletter_title'=>'homepage','footer_text'=>'footer',
-            'meta_title'=>'seo','meta_description'=>'seo','robots'=>'seo','google_analytics_id'=>'seo',
+            'meta_title'=>'seo','meta_description'=>'seo','robots'=>'seo','robots_txt'=>'seo','google_analytics_id'=>'seo',
             'header_scripts'=>'tracking','footer_scripts'=>'tracking',
+            'order_success_message'=>'checkout',
         ];
         foreach($groups as $key=>$group) if(array_key_exists($key,$data)) {
             $type = match (true) {
@@ -608,6 +630,7 @@ class AdminController extends Controller
             'subscribers'=>['email'=>['required','email','max:255',$unique('subscribers','email')],'is_active'=>'nullable|boolean'],
             'coupons'=>['code'=>['required','string','max:50',$unique('coupons','code')],'type'=>'required|in:percent,fixed','value'=>['required','numeric','min:0.01',Rule::when(request('type')==='percent','max:100')],
                 'minimum_order'=>'nullable|numeric|min:0','maximum_discount'=>'nullable|numeric|min:0.01','usage_limit'=>'nullable|integer|min:1',
+                'category_ids'=>'nullable|array','category_ids.*'=>'integer|exists:categories,id','addon_groups'=>'nullable|array','addon_groups.*'=>'string|max:80',
                 'starts_at'=>'nullable|date','expires_at'=>'nullable|date|after:starts_at','is_active'=>'nullable|boolean'],
             'contacts'=>['name'=>'required|string|max:120','email'=>'nullable|email|max:255','phone'=>'nullable|string|max:30','subject'=>'nullable|string|max:180','message'=>'required|string|max:5000','is_read'=>'nullable|boolean'],
             default=>[],
@@ -618,6 +641,11 @@ class AdminController extends Controller
     {
         if(array_key_exists('slug',$data)||in_array($r,['categories','brands','products','posts','pages'])) $data['slug']=$data['slug']??Str::slug($data['name']??$data['title']);
         if($r==='coupons' && isset($data['code'])) $data['code']=Str::upper(trim($data['code']));
+        if($r==='coupons') {
+            // Empty selection = no limit (stored as null).
+            if(array_key_exists('category_ids',$data)) $data['category_ids']=collect($data['category_ids']??[])->map(fn($id)=>(int)$id)->unique()->values()->all() ?: null;
+            if(array_key_exists('addon_groups',$data)) $data['addon_groups']=collect($data['addon_groups']??[])->map(fn($g)=>trim((string)$g))->filter()->unique(fn($g)=>Str::lower($g))->values()->all() ?: null;
+        }
         foreach(['is_active','is_featured','is_sale','is_read','addons_enabled'] as $field) if($request->has($field)) $data[$field]=$request->boolean($field);
         foreach(['image','logo'] as $field) if($request->hasFile($field)) {
             if($record?->{$field}) Storage::disk('public')->delete($record->{$field});
